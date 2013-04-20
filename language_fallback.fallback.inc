@@ -70,26 +70,34 @@ class localeContextWithFallback implements ArrayAccess {
   }
 
   public function offsetGet($offset) {
-    $locale_t = &drupal_static('locale');
-    $translation = locale($offset, $this->context, $this->first_language);
-    // Check whether string returned was a translation or the untranslated
-    // original. Have to check locale()'s static variable, because just
-    // comparing the strings might be misleading.
-    // (Stupid example: (en) village == (fr) village.).
-    // Locale sets the value to TRUE if the string is not found (if it is found
-    // it sets the value to that string. So if the value === TRUE we know there
-    // was no translation found for this language and we can check the fallback.
-    if ($locale_t[$this->first_language][$this->context][$offset] === TRUE) {
-      $translation = $this->fallback[$offset];
+    $translation = $offset;
+    if (function_exists('locale')) {
+      $locale_t = &drupal_static('locale');
+      $translation = locale($offset, $this->context, $this->first_language);
+      // Check whether string returned was a translation or the untranslated
+      // original. Have to check locale()'s static variable, because just
+      // comparing the strings might be misleading.
+      // (Stupid example: (en) village == (fr) village.).
+      // Locale sets the value to TRUE if the string is not found (if it is found
+      // it sets the value to that string. So if the value === TRUE we know there
+      // was no translation found for this language and we can check the fallback.
+      if ($locale_t[$this->first_language][$this->context][$offset] === TRUE) {
+        $translation = $this->fallback[$offset];
+      }
     }
     return $translation;
   }
 
   public function offsetExists($offset) {
-    $locale_t = &drupal_static('locale');
-    $translation = locale($offset, $this->context, $this->first_language);
-    if ($locale_t[$this->first_language][$this->context][$offset] !== TRUE) {
-      return TRUE;
+    if (function_exists('locale')) {
+      $locale_t = &drupal_static('locale');
+      $translation = locale($offset, $this->context, $this->first_language);
+      if ($locale_t[$this->first_language][$this->context][$offset] !== TRUE) {
+        return TRUE;
+      }
+      else {
+        return isset($this->fallback[$offset]);
+      }
     }
     else {
       return isset($this->fallback[$offset]);
