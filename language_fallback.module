@@ -2,63 +2,73 @@
 
 /**
  * @file
- * Hook implementations for the Language Fallback module.
+ * Add sublanguage handling functionality to Drupal.
  */
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\language\ConfigurableLanguageInterface;
+use Drupal\language\Entity\ConfigurableLanguage;
 
 /**
- * Implements hook_form_alter().
+ * Implements hook_language_fallback_candidates_OPERATION_alter()
  */
-function language_fallback_form_alter(&$form, &$form_state, $form_id) {
-  if ($form_id == 'locale_languages_predefined_form' || $form_id == 'locale_languages_custom_form' || $form_id == 'locale_languages_edit_form') {
-    // Store language for edit form or FALSE on create forms.
-    $editmode = isset($form['langcode_view']) ? $form['langcode']['#value'] : FALSE;
-    $default_lang = language_default();
-    $languages = language_list();
-    $options = locale_language_list();
+function language_fallback_language_fallback_candidates_locale_lookup_alter(array &$candidates, array $context) {
+  $attempted_langcode = $context['langcode'];
+  $candidates = array();
 
-    // Alter label of default language.
-    if (isset($options[$default_lang->language])) {
-      $options[$default_lang->language] = t('Default language (@lang)', array('@lang' => $default_lang->name));
+  /** @var Drupal\language\Entity\ConfigurableLanguage $language */
+  $language = ConfigurableLanguage::load($attempted_langcode);
+  do {
+    $fallback_langcode = $language->getThirdpartySetting('language_fallback', 'fallback_langcode', '');
+    // Include this candidate if there was a fallback language and it was not
+    // the same as the original langcode (which LocaleLookup already tried) and
+    // if it is not already in the list. Avoid endless loops and fruitless work.
+    if (!empty($fallback_langcode) && $attempted_langcode != $fallback_langcode && !in_array($fallback_langcode, $candidates)) {
+      $candidates[] = $fallback_langcode;
+      $language = ConfigurableLanguage::load($fallback_langcode);
     }
-
-    // Add native name.
-    foreach ($options as $key => $option) {
-      if (!empty($languages[$key]->native)) {
-        $options[$key] .= " ({$languages[$key]->native})";
-      }
+    else {
+      $language = NULL;
     }
-
-    // Add select to create/edit form.
-    $key = $form_id == 'locale_languages_predefined_form' ? 'language list' : 'custom language';
-    $form[$key]['fallback'] = array(
-      '#type' => 'select',
-      '#title' => t('Language fallback'),
-      '#default_value' => '',
-      '#options' => $options,
-      '#description' => t('This language will be used as a fallback for text that has no translation in the selected language.'),
-    );
-    $form['#submit'][] = 'language_fallback_add_language_submit';
-
-    // Remove current language in edit mode, set default.
-    if ($editmode) {
-      unset($form[$key]['fallback']['#options'][$editmode]);
-      $form[$key]['fallback']['#default_value'] = $languages[$editmode]->fallback;
-    }
-  }
+  } while (!empty($language));
 }
 
 /**
- * Form submit callback.
+ * Implements hook_form_FORM_ID_alter()
  */
-function language_fallback_add_language_submit($form, &$form_state) {
-  db_update('languages')
-    ->fields(array('fallback' => $form_state['values']['fallback']))
-    ->condition('language', $form_state['values']['langcode'])
-    ->execute();
-  if (!empty($form_state['values']['fallback'])) {
-    variable_set('locale_custom_strings_' . $form_state['values']['langcode'], new localeWithFallback($form_state['values']['langcode'], $form_state['values']['fallback']));
+function language_fallback_form_language_admin_edit_form_alter(&$form, FormStateInterface $form_state) {
+  /** @var Drupal\language\Entity\ConfigurableLanguage $this_language */
+  $this_language = $form_state->getFormObject()->getEntity();
+
+  $languages = Drupal::languageManager()->getLanguages();
+  $options = array();
+  foreach($languages as $language) {
+    // Only include this language if its not itself.
+    if ($language->getId() != $this_language->getId()) {
+      $options[$language->getId()] = $language->getName();
+    }
   }
-  else {
-    variable_del('locale_custom_strings_' . $form_state['values']['langcode']);
-  }
+  $form['language_fallback_fallback_langcode'] = array(
+    '#type' => 'select',
+    '#title' => t('Interface translation fallback language'),
+    '#description' => t('When an interface translation is not available for text, this fallback language is used. If that is not available either, the fallback continues onward.'),
+    '#options' => $options,
+    '#default_value' => $this_language->getThirdPartySetting('language_fallback', 'fallback_langcode', ''),
+    // Allow to not fall back on any other language.
+    '#empty_option' => t('-None-'),
+  );
+  $form['#entity_builders'][] = 'language_fallback_form_language_admin_edit_form_builder';
+}
+
+/**
+ * Entity builder for the language form language_fallback options.
+ *
+ * @see language_fallback_form_language_admin_edit_form_alter()
+ */
+function language_fallback_form_language_admin_edit_form_builder($entity_type, ConfigurableLanguageInterface $this_language, &$form, FormStateInterface $form_state) {
+  $this_language->setThirdPartySetting(
+    'language_fallback',
+    'fallback_langcode',
+    $form_state->getValue('language_fallback_fallback_langcode')
+  );
 }
